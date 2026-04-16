@@ -3,18 +3,18 @@
 
 <head>
     <meta content="text/html; charset=utf-8" http-equiv="Content-Type">
-    <title>mpegts.js demo</title>
+    <title>mpegts.js111 demo</title>
     <link rel="stylesheet" type="text/css" href="demo.css" />
 </head>
 
 <body>
-    
+    111
     <div class="mainContainer">
         <div>
             <div id="streamURL">
                 <div class="url-input">
                     <label for="sURL">Stream URL:</label>
-                    <input id="sURL" type="text" value="http://127.0.0.1/flv/7182741-1.flv" />
+                    <input id="sURL" type="text" value="ws://127.0.0.1/live/test.live.flv" />
                     <button onclick="switch_mds()">Switch to MediaDataSource</button>
                 </div>
                 <div class="options">
@@ -103,8 +103,49 @@
                 seekType: 'range',
                 liveBufferLatencyChasing: document.getElementById('liveBufferLatencyChasing').checked,
             });
+            player.on(mpegts.Events.LOADING_COMPLETE,() =>{ console.log('加载完成'); });
+            player.on(mpegts.Events.MEDIA_INFO, (info) => {
+                console.log(`视频编码: ${info.videoCodec}, 音频编码: ${info.audioCodec}`);
+            });
+            player.on(mpegts.Events.SEI_ARRIVED, (info) => {
+                console.log('SEI_ARRIVED raw:', info);
+
+                if (info && info.type === 5 && info.user_data) {
+                    let userData = info.user_data;
+                    if (!(userData instanceof Uint8Array)) {
+                        userData = new Uint8Array(Object.values(userData));
+                    }
+
+                    let uuid = info.uuid;
+                    if (uuid && !(uuid instanceof Uint8Array)) {
+                        uuid = new Uint8Array(Object.values(uuid));
+                    }
+
+                    const text = new TextDecoder('utf-8').decode(userData);
+                    console.log(`SEI text: ${text}`);
+                    if (uuid) {
+                        const uuidHex = Array.from(uuid)
+                            .map((v) => v.toString(16).padStart(2, '0'))
+                            .join('');
+                        console.log(`SEI uuid: ${uuidHex}`);
+                    }
+                } else {
+                    console.warn('SEI_ARRIVED received, but current payload is not parsed as type-5 user data:', info);
+                }
+            });
+
+            player.on(mpegts.Events.ERROR, (errorType, errorDetail, errorInfo) => {
+                console.error('播放错误:', { errorType, errorDetail, errorInfo });
+            });
+            player.on('playing', () => {
+                console.log('视频开始播放');
+            });
+
+
+
             player.attachMediaElement(element);
             player.load();
+            
         }
 
         function player_start() {
@@ -235,3 +276,4 @@
 </body>
 
 </html>
+
