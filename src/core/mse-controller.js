@@ -234,6 +234,7 @@ class MSEController {
 
         let firstInitSegment = false;
 
+        // cyldebug [MSEController] > Received Initialization Segment, mimeType: audio/mp4;codecs=ipcm
         Log.v(this.TAG, 'Received Initialization Segment, mimeType: ' + mimeType);
         this._lastInitSegments[is.type] = is;
 
@@ -241,6 +242,7 @@ class MSEController {
             if (!this._mimeTypes[is.type]) {  // empty, first chance create sourcebuffer
                 firstInitSegment = true;
                 try {
+                    // cyldebug audio/mp4;codecs=ipcm
                     let sb = this._sourceBuffers[is.type] = this._mediaSource.addSourceBuffer(mimeType);
                     sb.addEventListener('error', this.e.onSourceBufferError);
                     sb.addEventListener('updateend', this.e.onSourceBufferUpdateEnd);
