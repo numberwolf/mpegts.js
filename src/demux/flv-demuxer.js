@@ -471,7 +471,8 @@ class FLVDemuxer {
     }
 
     _parseSEIPayload(data, pts, codec) {
-        let timestamp = pts != undefined ? Math.floor(pts / this._timescale) : undefined;
+        // FLV tag timestamps are already in milliseconds, matching audio/video samples.
+        let timestamp = pts != undefined ? Math.floor(pts) : undefined;
         let sei_data = parseSEI(data, timestamp, codec);
 
         if (sei_data && typeof this._onSeiArrived === 'function') {
