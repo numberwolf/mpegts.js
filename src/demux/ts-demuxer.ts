@@ -156,6 +156,15 @@ class TSDemuxer extends BaseDemuxer {
     private audio_metadata_changed_ = false;
     private loas_previous_frame: LOASAACFrame | null = null;
 
+    // Some live gateways rewrite a B-frame TS decode clock into 1 ms bursts
+    // separated by a large jump while keeping PTS-DTS (CTS) meaningful.  MSE
+    // then receives almost-zero sample durations followed by a huge duration,
+    // which causes visible jumps and can eventually put the media element into
+    // a decode error.  Enable normalization only after that specific pattern
+    // has been observed; ordinary TS/VFR timestamps remain untouched.
+    private normalize_live_video_dts_ = false;
+    private normalized_video_next_dts_: number | undefined;
+
     private video_track_ = {type: 'video', id: 1, sequenceNumber: 0, samples: [], length: 0};
     private audio_track_ = {type: 'audio', id: 2, sequenceNumber: 0, samples: [], length: 0};
 
@@ -1282,6 +1291,7 @@ class TSDemuxer extends BaseDemuxer {
     private dispatchVideoMediaSegment() {
         if (this.isInitSegmentDispatched()) {
             if (this.video_track_.length) {
+                this.normalizeLiveVideoTimestamps();
                 this.onDataAvailable(null, this.video_track_);
             }
         }
@@ -1298,9 +1308,69 @@ class TSDemuxer extends BaseDemuxer {
     private dispatchAudioVideoMediaSegment() {
         if (this.isInitSegmentDispatched()) {
             if (this.audio_track_.length || this.video_track_.length) {
+                this.normalizeLiveVideoTimestamps();
                 this.onDataAvailable(this.audio_track_, this.video_track_);
             }
         }
+    }
+
+    private normalizeLiveVideoTimestamps(): void {
+        if (!this.config_ || this.config_.isLive !== true || !this.video_track_ ||
+            !this.video_track_.samples || this.video_track_.samples.length === 0) {
+            return;
+        }
+
+        const frame_rate = this.video_metadata_ && this.video_metadata_.details
+            ? this.video_metadata_.details.frame_rate
+            : null;
+        const fps_num = frame_rate ? Number(frame_rate.fps_num) : 0;
+        const fps_den = frame_rate ? Number(frame_rate.fps_den) : 0;
+        const ref_duration = fps_num > 0 && fps_den > 0
+            ? 1000 * fps_den / fps_num
+            : 0;
+        if (!Number.isFinite(ref_duration) || ref_duration < 1 || ref_duration > 1000) {
+            return;
+        }
+
+        const samples = this.video_track_.samples;
+        if (!this.normalize_live_video_dts_ && samples.length >= 3) {
+            const tiny_limit = Math.max(1, ref_duration / 8);
+            let tiny_delta_count = 0;
+            let large_delta_count = 0;
+            for (let i = 1; i < samples.length; i++) {
+                const delta = samples[i].dts - samples[i - 1].dts;
+                if (delta >= 0 && delta <= tiny_limit) {
+                    tiny_delta_count++;
+                } else if (delta >= ref_duration * 2) {
+                    large_delta_count++;
+                }
+            }
+            this.normalize_live_video_dts_ = tiny_delta_count >= 2 ||
+                (tiny_delta_count >= 1 && large_delta_count >= 1);
+        }
+
+        if (!this.normalize_live_video_dts_) {
+            return;
+        }
+
+        let next_dts = this.normalized_video_next_dts_;
+        if (!Number.isFinite(next_dts)) {
+            next_dts = samples[0].dts;
+        }
+
+        for (let i = 0; i < samples.length; i++) {
+            const sample = samples[i];
+            // The gateway's CTS still carries the B-frame reorder depth, but
+            // its millisecond DTS rewrite introduces +/-1 ms noise.  Snap CTS
+            // to the detected frame grid while rebuilding only the DTS clock.
+            const cts = Math.round(sample.cts / ref_duration) * ref_duration;
+            const dts = Math.round(next_dts);
+            sample.dts = dts;
+            sample.cts = Math.round(cts);
+            sample.pts = sample.dts + sample.cts;
+            next_dts += ref_duration;
+        }
+        this.normalized_video_next_dts_ = next_dts;
     }
 
     private parseADTSAACPayload(data: Uint8Array, pts: number) {

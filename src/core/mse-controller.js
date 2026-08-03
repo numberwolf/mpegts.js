@@ -70,6 +70,10 @@ class MSEController {
             video: null,
             audio: null
         };
+        this._disabledTracks = {
+            video: false,
+            audio: false
+        };
         this._lastInitSegments = {
             video: null,
             audio: null
@@ -112,6 +116,9 @@ class MSEController {
         if (this._useManagedMediaSource) {
             Log.v(this.TAG, 'Using ManagedMediaSource');
         }
+
+        this._disabledTracks.video = false;
+        this._disabledTracks.audio = false;
 
         let ms = this._mediaSource = this._useManagedMediaSource ? new self.ManagedMediaSource() : new self.MediaSource();
         ms.addEventListener('sourceopen', this.e.onSourceOpen);
@@ -214,6 +221,26 @@ class MSEController {
     }
 
     appendInitSegment(initSegment, deferred = undefined) {
+        let is = initSegment;
+        if (this._disabledTracks[is.type]) {
+            return;
+        }
+
+        let mimeType = `${is.container}`;
+        if (is.codec && is.codec.length > 0) {
+            if (is.codec === 'opus' && Browser.safari) {
+                is.codec = 'Opus';
+            }
+            mimeType += `;codecs=${is.codec}`;
+        }
+
+        const MediaSourceClass = this._useManagedMediaSource ? self.ManagedMediaSource : self.MediaSource;
+        if (MediaSourceClass && typeof MediaSourceClass.isTypeSupported === 'function' &&
+            !MediaSourceClass.isTypeSupported(mimeType)) {
+            this._disableTrack(is.type, mimeType, 'MediaSource.isTypeSupported returned false');
+            return;
+        }
+
         if (!this._mediaSource || this._mediaSource.readyState !== 'open' || this._mediaSource.streaming === false) {
             // sourcebuffer creation requires mediaSource.readyState === 'open'
             // so we defer the sourcebuffer creation, until sourceopen event triggered
@@ -221,15 +248,6 @@ class MSEController {
             // make sure that this InitSegment is in the front of pending segments queue
             this._pendingSegments[initSegment.type].push(initSegment);
             return;
-        }
-
-        let is = initSegment;
-        let mimeType = `${is.container}`;
-        if (is.codec && is.codec.length > 0) {
-            if (is.codec === 'opus' && Browser.safari) {
-                is.codec = 'Opus';
-            }
-            mimeType += `;codecs=${is.codec}`;
         }
 
         let firstInitSegment = false;
@@ -248,7 +266,7 @@ class MSEController {
                     sb.addEventListener('updateend', this.e.onSourceBufferUpdateEnd);
                 } catch (error) {
                     Log.e(this.TAG, error.message);
-                    this._emitter.emit(MSEEvents.ERROR, {code: error.code, msg: error.message});
+                    this._disableTrack(is.type, mimeType, error.message, error.code);
                     return;
                 }
             } else {
@@ -277,6 +295,9 @@ class MSEController {
 
     appendMediaSegment(mediaSegment) {
         let ms = mediaSegment;
+        if (this._disabledTracks[ms.type]) {
+            return;
+        }
         this._pendingSegments[ms.type].push(ms);
 
         if (this._config.autoCleanupSourceBuffer && this._needCleanupSourceBuffer()) {
@@ -509,7 +530,13 @@ class MSEController {
                         this._isBufferFull = true;
                     } else {
                         Log.e(this.TAG, error.message);
-                        this._emitter.emit(MSEEvents.ERROR, {code: error.code, msg: error.message});
+                        this._emitter.emit(MSEEvents.ERROR, {
+                            code: error.code,
+                            msg: error.message,
+                            trackType: type,
+                            mimeType: this._mimeTypes[type],
+                            codecUnsupported: false
+                        });
                     }
                 }
             }
@@ -532,6 +559,22 @@ class MSEController {
             this._doAppendSegments();
         }
         this._emitter.emit(MSEEvents.SOURCE_OPEN);
+    }
+
+    _disableTrack(type, mimeType, message, code = 0) {
+        if (this._disabledTracks[type]) {
+            return;
+        }
+        this._disabledTracks[type] = true;
+        this._pendingSegments[type].splice(0, this._pendingSegments[type].length);
+        this._pendingSourceBufferInit = this._pendingSourceBufferInit.filter((segment) => segment.type !== type);
+        this._emitter.emit(MSEEvents.ERROR, {
+            code: code,
+            msg: message,
+            trackType: type,
+            mimeType: mimeType,
+            codecUnsupported: true
+        });
     }
 
     _onStartStreaming() {

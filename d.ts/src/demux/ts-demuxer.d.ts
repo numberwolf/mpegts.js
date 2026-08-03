@@ -29,6 +29,8 @@ declare class TSDemuxer extends BaseDemuxer {
     private video_metadata_changed_;
     private audio_metadata_changed_;
     private loas_previous_frame;
+    private normalize_live_video_dts_;
+    private normalized_video_next_dts_;
     private video_track_;
     private audio_track_;
     constructor(probe_data: any, config: any);
@@ -74,6 +76,7 @@ declare class TSDemuxer extends BaseDemuxer {
     private dispatchVideoMediaSegment;
     private dispatchAudioMediaSegment;
     private dispatchAudioVideoMediaSegment;
+    private normalizeLiveVideoTimestamps;
     private parseADTSAACPayload;
     private parseLOASAACPayload;
     private parseAC3Payload;
